@@ -766,7 +766,116 @@ function init(modules, domApi) {
     return vnode;
   };
 }
-},{"./vnode":"node_modules/snabbdom/es/vnode.js","./is":"node_modules/snabbdom/es/is.js","./htmldomapi":"node_modules/snabbdom/es/htmldomapi.js","./h":"node_modules/snabbdom/es/h.js","./thunk":"node_modules/snabbdom/es/thunk.js"}],"node_modules/snabbdom/modules/class.js":[function(require,module,exports) {
+},{"./vnode":"node_modules/snabbdom/es/vnode.js","./is":"node_modules/snabbdom/es/is.js","./htmldomapi":"node_modules/snabbdom/es/htmldomapi.js","./h":"node_modules/snabbdom/es/h.js","./thunk":"node_modules/snabbdom/es/thunk.js"}],"src/dep.js":[function(require,module,exports) {
+"use strict";
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.default = Dep;
+
+function Dep() {
+  this.subs = [];
+  this.subIds = new Set();
+}
+
+Dep.prototype.addSub = function (sub) {
+  // this.subs.push(sub);
+  if (!this.subIds.has(sub.id)) {
+    this.subs.push(sub);
+    this.subIds.add(sub.id);
+  }
+};
+
+Dep.prototype.notify = function () {
+  this.subs.forEach(function (sub) {
+    sub.update();
+  });
+};
+
+Dep.target = null;
+},{}],"src/watcher.js":[function(require,module,exports) {
+"use strict";
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.default = Watcher;
+
+var _dep = _interopRequireDefault(require("./dep"));
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+var uid = 0;
+
+function Watcher(vm, cb) {
+  this.id = ++uid;
+  this.cb = cb;
+  this.vm = vm; // 此处为了触发属性的getter，从而在dep添加自己，结合Observer更易理解
+  //其实只是为了改变Dep.target的值
+  // 以及更新视图
+  //真正的属性的getter在render中
+
+  this.value = this.get();
+}
+
+Watcher.prototype.get = function () {
+  _dep.default.target = this;
+  this.cb.call(this.vm);
+  _dep.default.target = null;
+};
+
+Watcher.prototype.update = function () {
+  return this.get();
+};
+},{"./dep":"src/dep.js"}],"src/observe.js":[function(require,module,exports) {
+"use strict";
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.observe = observe;
+
+var _dep = _interopRequireDefault(require("./dep"));
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "function" && typeof Symbol.iterator === "symbol") { _typeof = function _typeof(obj) { return typeof obj; }; } else { _typeof = function _typeof(obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; }; } return _typeof(obj); }
+
+function observe(data) {
+  if (!data || _typeof(data) !== 'object') {
+    return;
+  }
+
+  var _loop = function _loop() {
+    dep = new _dep.default();
+    var val = data[key];
+    observe(val);
+    Object.defineProperty(data, key, {
+      enumerable: true,
+      configurable: true,
+      get: function get() {
+        if (_dep.default.target) {
+          dep.addSub(_dep.default.target);
+        }
+
+        return val;
+      },
+      set: function set(newVal) {
+        if (val === newVal) return;
+        val = newVal;
+        dep.notify(); // 通知所有订阅者
+      }
+    });
+  };
+
+  for (var key in data) {
+    var dep;
+
+    _loop();
+  }
+}
+},{"./dep":"src/dep.js"}],"node_modules/snabbdom/modules/class.js":[function(require,module,exports) {
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 function updateClass(oldVnode, vnode) {
@@ -1017,6 +1126,12 @@ exports.default = exports.eventListenersModule;
 
 var _snabbdom = require("snabbdom");
 
+var _watcher = _interopRequireDefault(require("./watcher"));
+
+var _observe = require("./observe");
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
 var patch = (0, _snabbdom.init)([require("snabbdom/modules/class").default, require("snabbdom/modules/props").default, require("snabbdom/modules/style").default, require("snabbdom/modules/eventlisteners").default]);
 
 function Vue(options) {
@@ -1031,9 +1146,26 @@ Vue.prototype._init = function (options) {
 }; //挂载 编译原理 AST语法树
 
 
+var mountComponent = function mountComponent(vm, el) {
+  // const vnode = this.$options.render.call(this);
+  // patch(document.querySelector(el), vnode)
+  var updateComponent = function updateComponent() {
+    var vnode = vm.$options.render.call(vm, _snabbdom.h);
+
+    if (vm._vnode) {
+      patch(vm._vnode, vnode);
+    } else {
+      patch(document.querySelector(el), vnode);
+    }
+
+    vm._vnode = vnode;
+  };
+
+  new _watcher.default(vm, updateComponent);
+};
+
 Vue.prototype.$mount = function (el) {
-  var vnode = this.$options.render.call(this);
-  patch(document.querySelector(el), vnode);
+  return mountComponent(this, el);
 };
 
 function noop() {} //把data代理到Vue实例上,可以以this.title方式访问data
@@ -1047,7 +1179,10 @@ function initData(vm) {
   while (i--) {
     var key = keys[i];
     proxy(vm, "_data", key);
-  }
+  } //发布 订阅 观察
+
+
+  (0, _observe.observe)(data);
 } //绑定method到Vue实例上
 
 
@@ -1089,22 +1224,23 @@ function someFn() {
 var vm = new Vue({
   el: '#app',
   data: {
-    title: 'prev'
+    title: 'prev',
+    num: 1
   },
-  render: function render() {
-    return (0, _snabbdom.h)('button', {
+  render: function render(h) {
+    return h('button', {
       on: {
         click: this.someFn
       }
-    }, this.title);
+    }, this.num);
   },
   methods: {
     someFn: function someFn() {
-      console.log(this.title);
+      this.num++;
     }
   }
 });
-},{"snabbdom":"node_modules/snabbdom/es/snabbdom.js","snabbdom/modules/class":"node_modules/snabbdom/modules/class.js","snabbdom/modules/props":"node_modules/snabbdom/modules/props.js","snabbdom/modules/style":"node_modules/snabbdom/modules/style.js","snabbdom/modules/eventlisteners":"node_modules/snabbdom/modules/eventlisteners.js"}],"../../AppData/Roaming/npm/node_modules/parcel-bundler/src/builtins/hmr-runtime.js":[function(require,module,exports) {
+},{"snabbdom":"node_modules/snabbdom/es/snabbdom.js","./watcher":"src/watcher.js","./observe":"src/observe.js","snabbdom/modules/class":"node_modules/snabbdom/modules/class.js","snabbdom/modules/props":"node_modules/snabbdom/modules/props.js","snabbdom/modules/style":"node_modules/snabbdom/modules/style.js","snabbdom/modules/eventlisteners":"node_modules/snabbdom/modules/eventlisteners.js"}],"../../AppData/Roaming/npm/node_modules/parcel-bundler/src/builtins/hmr-runtime.js":[function(require,module,exports) {
 var global = arguments[3];
 var OVERLAY_ID = '__parcel__error__overlay__';
 var OldModule = module.bundle.Module;

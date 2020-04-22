@@ -1,4 +1,6 @@
 import { h, init } from 'snabbdom'
+import Watcher from './watcher';
+import { observe } from './observe';
 const patch = init([
     require("snabbdom/modules/class").default,
     require("snabbdom/modules/props").default,
@@ -16,12 +18,27 @@ Vue.prototype._init = function (options) {
     this.$options = options;
     initData(this);
     initMethods(this);
-    this.$mount(this.$options.el)
+    this.$mount(this.$options.el);
 }
 //挂载 编译原理 AST语法树
-Vue.prototype.$mount = function (el) {
-    const vnode = this.$options.render.call(this);
-    patch(document.querySelector(el), vnode)
+var mountComponent = function (vm,el) {
+    // const vnode = this.$options.render.call(this);
+    // patch(document.querySelector(el), vnode)
+    let updateComponent = function(){
+        const vnode = vm.$options.render.call(vm,h);
+        if(vm._vnode){
+            patch(vm._vnode,vnode)
+        }else{
+            patch(document.querySelector(el),vnode)
+        }
+        vm._vnode = vnode;
+    }
+
+    new Watcher(vm,updateComponent);
+}
+
+Vue.prototype.$mount = function(el){
+    return mountComponent(this,el)
 }
 
 function noop() { }
@@ -35,6 +52,8 @@ function initData(vm) {
         const key = keys[i];
         proxy(vm, "_data", key);
     }
+    //发布 订阅 观察
+    observe(data);
 }
 //绑定method到Vue实例上
 function initMethods(vm) {
@@ -70,14 +89,15 @@ function someFn() {
 var vm = new Vue({
     el: '#app',
     data: {
-        title: 'prev'
+        title: 'prev',
+        num:1
     },
-    render() {
-        return h('button', { on: { click: this.someFn } }, this.title)
+    render(h) {
+        return h('button', { on: { click: this.someFn } }, this.num);
     },
     methods:{
         someFn:function(){
-            console.log(this.title);
+            this.num++;
         }
     }
 })
