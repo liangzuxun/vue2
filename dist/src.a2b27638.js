@@ -1026,6 +1026,7 @@ function Vue(options) {
 Vue.prototype._init = function (options) {
   this.$options = options;
   initData(this);
+  initMethods(this);
   this.$mount(this.$options.el);
 }; //挂载 编译原理 AST语法树
 
@@ -1046,6 +1047,17 @@ function initData(vm) {
   while (i--) {
     var key = keys[i];
     proxy(vm, "_data", key);
+  }
+} //绑定method到Vue实例上
+
+
+function initMethods(vm) {
+  var methods = vm.$options.methods;
+
+  if (methods) {
+    for (var key in methods) {
+      vm[key] = typeof methods[key] !== 'function' ? noop : methods[key].bind(vm);
+    }
   }
 }
 
@@ -1082,9 +1094,14 @@ var vm = new Vue({
   render: function render() {
     return (0, _snabbdom.h)('button', {
       on: {
-        click: someFn
+        click: this.someFn
       }
     }, this.title);
+  },
+  methods: {
+    someFn: function someFn() {
+      console.log(this.title);
+    }
   }
 });
 },{"snabbdom":"node_modules/snabbdom/es/snabbdom.js","snabbdom/modules/class":"node_modules/snabbdom/modules/class.js","snabbdom/modules/props":"node_modules/snabbdom/modules/props.js","snabbdom/modules/style":"node_modules/snabbdom/modules/style.js","snabbdom/modules/eventlisteners":"node_modules/snabbdom/modules/eventlisteners.js"}],"../../AppData/Roaming/npm/node_modules/parcel-bundler/src/builtins/hmr-runtime.js":[function(require,module,exports) {
@@ -1115,7 +1132,7 @@ var parent = module.bundle.parent;
 if ((!parent || !parent.isParcelRequire) && typeof WebSocket !== 'undefined') {
   var hostname = "" || location.hostname;
   var protocol = location.protocol === 'https:' ? 'wss' : 'ws';
-  var ws = new WebSocket(protocol + '://' + hostname + ':' + "59647" + '/');
+  var ws = new WebSocket(protocol + '://' + hostname + ':' + "61012" + '/');
 
   ws.onmessage = function (event) {
     checkedAssets = {};
