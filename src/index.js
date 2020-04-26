@@ -1,6 +1,7 @@
 import { h, init } from 'snabbdom'
 import Watcher from './watcher';
 import { observe } from './observe';
+import Dep from './dep';
 const patch = init([
     require("snabbdom/modules/class").default,
     require("snabbdom/modules/props").default,
@@ -18,6 +19,8 @@ Vue.prototype._init = function (options) {
     this.$options = options;
     initData(this);
     initMethods(this);
+    console.log(this.$options.computed)
+    initComputed(this,this.$options.computed)
     this.$mount(this.$options.el);
 }
 //挂载 编译原理 AST语法树
@@ -92,8 +95,13 @@ var vm = new Vue({
         title: 'prev',
         num:1
     },
+    computed:{
+        computedNum(){
+            return this.num * 100;
+        }
+    },
     render(h) {
-        return h('button', { on: { click: this.someFn } }, this.num);
+        return h('button', { on: { click: this.someFn } }, this.computedNum);
     },
     methods:{
         someFn:function(){
@@ -101,3 +109,38 @@ var vm = new Vue({
         }
     }
 })
+
+function initComputed(vm,computed){
+    vm._computedWatchers = Object.create(null);
+    var computedWatcherOptions = {
+        lazy:true
+    }
+    for(const key in computed){
+        const userDef = computed[key];
+        const getter = typeof userDef === 'function'?userDef:userDef.get;
+        vm._computedWatchers[key] = new Watcher(vm,getter,computedWatcherOptions);
+        defineComputed(vm,key,userDef);
+    }
+}
+function defineComputed(target,key,userDef){
+    Object.defineProperty(target,key,{
+        enumerable:true,
+        configurable:true,
+        get(){
+            
+            const watcher = this._computedWatchers && this._computedWatchers[key];
+            if(watcher){
+                if(watcher.dirty){
+                   
+                    watcher.evaluate();
+                }
+                //
+                if(Dep.target){
+                    watcher.depend();
+                }
+                return watcher.value;
+            }
+        },
+        set:noop
+    })
+}

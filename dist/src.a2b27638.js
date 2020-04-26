@@ -773,17 +773,27 @@ Object.defineProperty(exports, "__esModule", {
   value: true
 });
 exports.default = Dep;
+exports.pushTarget = pushTarget;
+exports.popTarget = popTarget;
+var uid = 0;
 
 function Dep() {
+  this.id = ++uid; // uid for batching
+
   this.subs = [];
   this.subIds = new Set();
 }
 
 Dep.prototype.addSub = function (sub) {
-  // this.subs.push(sub);
   if (!this.subIds.has(sub.id)) {
     this.subs.push(sub);
     this.subIds.add(sub.id);
+  }
+};
+
+Dep.prototype.depend = function () {
+  if (Dep.target) {
+    Dep.target.addDep(this);
   }
 };
 
@@ -794,6 +804,17 @@ Dep.prototype.notify = function () {
 };
 
 Dep.target = null;
+var targetStack = [];
+
+function pushTarget(target) {
+  targetStack.push(target);
+  Dep.target = target;
+}
+
+function popTarget() {
+  targetStack.pop();
+  Dep.target = targetStack[targetStack.length - 1];
+}
 },{}],"src/watcher.js":[function(require,module,exports) {
 "use strict";
 
@@ -802,31 +823,74 @@ Object.defineProperty(exports, "__esModule", {
 });
 exports.default = Watcher;
 
-var _dep = _interopRequireDefault(require("./dep"));
+var _dep = _interopRequireWildcard(require("./dep"));
 
-function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+function _getRequireWildcardCache() { if (typeof WeakMap !== "function") return null; var cache = new WeakMap(); _getRequireWildcardCache = function () { return cache; }; return cache; }
+
+function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } if (obj === null || typeof obj !== "object" && typeof obj !== "function") { return { default: obj }; } var cache = _getRequireWildcardCache(); if (cache && cache.has(obj)) { return cache.get(obj); } var newObj = {}; var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor; for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) { var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null; if (desc && (desc.get || desc.set)) { Object.defineProperty(newObj, key, desc); } else { newObj[key] = obj[key]; } } } newObj.default = obj; if (cache) { cache.set(obj, newObj); } return newObj; }
 
 var uid = 0;
 
-function Watcher(vm, cb) {
-  this.id = ++uid;
-  this.cb = cb;
-  this.vm = vm; // 此处为了触发属性的getter，从而在dep添加自己，结合Observer更易理解
-  //其实只是为了改变Dep.target的值
-  // 以及更新视图
-  //真正的属性的getter在render中
+function Watcher(vm, expOrFn, options) {
+  this.id = ++uid; // uid for batching
 
-  this.value = this.get();
+  this.expOrFn = expOrFn;
+  this.vm = vm;
+  this.deps = [];
+  this.depIds = new Set();
+
+  if (options) {
+    this.lazy = !!options.lazy;
+  } else {
+    this.lazy = false;
+  }
+
+  this.dirty = this.lazy; // 用于渲染时不把计算watcher设置成Dep.target
+  // 此处为了触发属性的getter，从而在dep添加自己，结合Observer更易理解
+
+  this.value = this.lazy ? undefined : this.get();
 }
 
 Watcher.prototype.get = function () {
-  _dep.default.target = this;
-  this.cb.call(this.vm);
-  _dep.default.target = null;
+  var value;
+  (0, _dep.pushTarget)(this); // if (this.dirty) Dep.target = this
+
+  value = this.expOrFn.call(this.vm); // if (this.dirty) Dep.target = null
+
+  (0, _dep.popTarget)();
+  return value;
 };
 
 Watcher.prototype.update = function () {
-  return this.get();
+  //清楚computed watcher的缓存
+  if (this.lazy) {
+    this.dirty = true;
+  } else {
+    this.get();
+  }
+};
+
+Watcher.prototype.addDep = function (dep) {
+  var id = dep.id;
+
+  if (!this.depIds.has(id)) {
+    this.deps.push(dep);
+    this.depIds.add(id);
+    dep.addSub(this);
+  }
+};
+
+Watcher.prototype.evaluate = function () {
+  this.value = this.get();
+  this.dirty = false;
+};
+
+Watcher.prototype.depend = function () {
+  var i = this.deps.length;
+
+  while (i--) {
+    this.deps[i].depend();
+  }
 };
 },{"./dep":"src/dep.js"}],"src/observe.js":[function(require,module,exports) {
 "use strict";
@@ -856,7 +920,8 @@ function observe(data) {
       configurable: true,
       get: function get() {
         if (_dep.default.target) {
-          dep.addSub(_dep.default.target);
+          //dep.addSub(Dep.target);
+          dep.depend();
         }
 
         return val;
@@ -1130,6 +1195,8 @@ var _watcher = _interopRequireDefault(require("./watcher"));
 
 var _observe = require("./observe");
 
+var _dep = _interopRequireDefault(require("./dep"));
+
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
 var patch = (0, _snabbdom.init)([require("snabbdom/modules/class").default, require("snabbdom/modules/props").default, require("snabbdom/modules/style").default, require("snabbdom/modules/eventlisteners").default]);
@@ -1142,6 +1209,8 @@ Vue.prototype._init = function (options) {
   this.$options = options;
   initData(this);
   initMethods(this);
+  console.log(this.$options.computed);
+  initComputed(this, this.$options.computed);
   this.$mount(this.$options.el);
 }; //挂载 编译原理 AST语法树
 
@@ -1227,12 +1296,17 @@ var vm = new Vue({
     title: 'prev',
     num: 1
   },
+  computed: {
+    computedNum: function computedNum() {
+      return this.num * 100;
+    }
+  },
   render: function render(h) {
     return h('button', {
       on: {
         click: this.someFn
       }
-    }, this.num);
+    }, this.computedNum);
   },
   methods: {
     someFn: function someFn() {
@@ -1240,7 +1314,45 @@ var vm = new Vue({
     }
   }
 });
-},{"snabbdom":"node_modules/snabbdom/es/snabbdom.js","./watcher":"src/watcher.js","./observe":"src/observe.js","snabbdom/modules/class":"node_modules/snabbdom/modules/class.js","snabbdom/modules/props":"node_modules/snabbdom/modules/props.js","snabbdom/modules/style":"node_modules/snabbdom/modules/style.js","snabbdom/modules/eventlisteners":"node_modules/snabbdom/modules/eventlisteners.js"}],"../../AppData/Roaming/npm/node_modules/parcel-bundler/src/builtins/hmr-runtime.js":[function(require,module,exports) {
+
+function initComputed(vm, computed) {
+  vm._computedWatchers = Object.create(null);
+  var computedWatcherOptions = {
+    lazy: true
+  };
+
+  for (var key in computed) {
+    var userDef = computed[key];
+    var getter = typeof userDef === 'function' ? userDef : userDef.get;
+    vm._computedWatchers[key] = new _watcher.default(vm, getter, computedWatcherOptions);
+    defineComputed(vm, key, userDef);
+  }
+}
+
+function defineComputed(target, key, userDef) {
+  Object.defineProperty(target, key, {
+    enumerable: true,
+    configurable: true,
+    get: function get() {
+      var watcher = this._computedWatchers && this._computedWatchers[key];
+
+      if (watcher) {
+        if (watcher.dirty) {
+          watcher.evaluate();
+        } //
+
+
+        if (_dep.default.target) {
+          watcher.depend();
+        }
+
+        return watcher.value;
+      }
+    },
+    set: noop
+  });
+}
+},{"snabbdom":"node_modules/snabbdom/es/snabbdom.js","./watcher":"src/watcher.js","./observe":"src/observe.js","./dep":"src/dep.js","snabbdom/modules/class":"node_modules/snabbdom/modules/class.js","snabbdom/modules/props":"node_modules/snabbdom/modules/props.js","snabbdom/modules/style":"node_modules/snabbdom/modules/style.js","snabbdom/modules/eventlisteners":"node_modules/snabbdom/modules/eventlisteners.js"}],"../../AppData/Roaming/npm/node_modules/parcel-bundler/src/builtins/hmr-runtime.js":[function(require,module,exports) {
 var global = arguments[3];
 var OVERLAY_ID = '__parcel__error__overlay__';
 var OldModule = module.bundle.Module;
@@ -1268,7 +1380,7 @@ var parent = module.bundle.parent;
 if ((!parent || !parent.isParcelRequire) && typeof WebSocket !== 'undefined') {
   var hostname = "" || location.hostname;
   var protocol = location.protocol === 'https:' ? 'wss' : 'ws';
-  var ws = new WebSocket(protocol + '://' + hostname + ':' + "61012" + '/');
+  var ws = new WebSocket(protocol + '://' + hostname + ':' + "51051" + '/');
 
   ws.onmessage = function (event) {
     checkedAssets = {};

@@ -7,14 +7,15 @@ export function observe(data) {
   }
   for (var key in data) {
     var dep = new Dep()
-    let val = data[key]
+    let val = data[key];
     observe(val)
     Object.defineProperty(data, key, {
       enumerable: true,
       configurable: true,
       get() {
         if (Dep.target) {
-          dep.addSub(Dep.target);
+          //dep.addSub(Dep.target);
+          dep.depend();
         }
         return val
       },
