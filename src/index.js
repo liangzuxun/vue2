@@ -15,12 +15,13 @@ const patch = init([
 function Vue(options) {
     this._init(options)
 }
+stateMixin(Vue);
 Vue.prototype._init = function (options) {
     this.$options = options;
     initData(this);
     initMethods(this);
-    console.log(this.$options.computed)
-    initComputed(this,this.$options.computed)
+    initComputed(this,this.$options.computed);
+    initWatch(this,this.$options.watch);
     this.$mount(this.$options.el);
 }
 //挂载 编译原理 AST语法树
@@ -36,7 +37,7 @@ var mountComponent = function (vm,el) {
         }
         vm._vnode = vnode;
     }
-
+    //Dep.target = renderWatcher
     new Watcher(vm,updateComponent);
 }
 
@@ -93,15 +94,21 @@ var vm = new Vue({
     el: '#app',
     data: {
         title: 'prev',
-        num:1
+        num:1,
+        watchMsg:"msg"
     },
-    computed:{
-        computedNum(){
-            return this.num * 100;
+    // computed:{
+    //     computedNum(){
+    //         return this.num * 100;
+    //     }
+    // },
+    watch:{
+        num(newVal,oldVal){
+            this.watchMsg = newVal + " dajllda";
         }
     },
     render(h) {
-        return h('button', { on: { click: this.someFn } }, this.computedNum);
+        return h('button', { on: { click: this.someFn } }, this.watchMsg);
     },
     methods:{
         someFn:function(){
@@ -118,7 +125,7 @@ function initComputed(vm,computed){
     for(const key in computed){
         const userDef = computed[key];
         const getter = typeof userDef === 'function'?userDef:userDef.get;
-        vm._computedWatchers[key] = new Watcher(vm,getter,computedWatcherOptions);
+        vm._computedWatchers[key] = new Watcher(vm,getter,noop,computedWatcherOptions);
         defineComputed(vm,key,userDef);
     }
 }
@@ -134,7 +141,7 @@ function defineComputed(target,key,userDef){
                    
                     watcher.evaluate();
                 }
-                //
+                
                 if(Dep.target){
                     watcher.depend();
                 }
@@ -143,4 +150,53 @@ function defineComputed(target,key,userDef){
         },
         set:noop
     })
+}
+
+
+function isPlainObject(obj){
+    return Object.prototype.toString.call(obj) === '[object Object]';
+}
+function initWatch(vm,watch){
+    for(const key in watch){
+        const handler = watch[key]
+        if(Array.isArray(handler)){
+            for(let i = 0;i<handler.length;i++){
+                createWatcher(vm,key,handler[i])
+            }
+        }else{
+            createWatcher(vm,key,handler)
+        }
+    }
+}
+/**
+ * num:{
+ *  handler(newVal,oldVal){
+ *      this.watchMsg = newVal + "12313";
+ *  },
+ *  deep:true
+ * }
+ * 
+ */
+function createWatcher(vm,expOrFn,handler,options){
+    
+    if(isPlainObject(handler)){
+        options = handler
+        handler = handler.handler
+    }
+    if(typeof handler === 'string'){
+        handler = vm[handler]
+    }
+    return vm.$watch(expOrFn,handler,options)
+}
+
+function stateMixin(Vue){
+    Vue.prototype.$watch = function(expOrFn,cb,options){
+        const vm = this;
+        if(isPlainObject(cb)){
+            return createWatcher(vm,expOrFn,cb,options)
+        }
+        options = options || {}
+        options.user = true
+        const watcher = new Watcher(vm,expOrFn,cb,options)
+    }
 }

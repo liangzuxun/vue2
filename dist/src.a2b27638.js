@@ -792,6 +792,7 @@ Dep.prototype.addSub = function (sub) {
 };
 
 Dep.prototype.depend = function () {
+  //computedWatcher
   if (Dep.target) {
     Dep.target.addDep(this);
   }
@@ -815,6 +816,25 @@ function popTarget() {
   targetStack.pop();
   Dep.target = targetStack[targetStack.length - 1];
 }
+},{}],"src/parsePath.js":[function(require,module,exports) {
+"use strict";
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.parsePath = parsePath;
+
+function parsePath(path) {
+  var segments = path.split('.');
+  return function (obj) {
+    for (var i = 0; i < segments.length; i++) {
+      if (!obj) return;
+      obj = obj[segments[i]];
+    }
+
+    return obj;
+  };
+}
 },{}],"src/watcher.js":[function(require,module,exports) {
 "use strict";
 
@@ -825,37 +845,44 @@ exports.default = Watcher;
 
 var _dep = _interopRequireWildcard(require("./dep"));
 
+var _parsePath = require("./parsePath");
+
 function _getRequireWildcardCache() { if (typeof WeakMap !== "function") return null; var cache = new WeakMap(); _getRequireWildcardCache = function () { return cache; }; return cache; }
 
 function _interopRequireWildcard(obj) { if (obj && obj.__esModule) { return obj; } if (obj === null || typeof obj !== "object" && typeof obj !== "function") { return { default: obj }; } var cache = _getRequireWildcardCache(); if (cache && cache.has(obj)) { return cache.get(obj); } var newObj = {}; var hasPropertyDescriptor = Object.defineProperty && Object.getOwnPropertyDescriptor; for (var key in obj) { if (Object.prototype.hasOwnProperty.call(obj, key)) { var desc = hasPropertyDescriptor ? Object.getOwnPropertyDescriptor(obj, key) : null; if (desc && (desc.get || desc.set)) { Object.defineProperty(newObj, key, desc); } else { newObj[key] = obj[key]; } } } newObj.default = obj; if (cache) { cache.set(obj, newObj); } return newObj; }
 
 var uid = 0;
 
-function Watcher(vm, expOrFn, options) {
+function Watcher(vm, expOrFn, cb, options) {
   this.id = ++uid; // uid for batching
 
   this.expOrFn = expOrFn;
   this.vm = vm;
   this.deps = [];
   this.depIds = new Set();
+  this.cb = cb;
 
   if (options) {
+    this.user = !!options.user; // new vue({watch:{}})
+
     this.lazy = !!options.lazy;
   } else {
-    this.lazy = false;
+    this.user = this.lazy = false;
   }
 
   this.dirty = this.lazy; // 用于渲染时不把计算watcher设置成Dep.target
   // 此处为了触发属性的getter，从而在dep添加自己，结合Observer更易理解
 
+  this.getter = typeof expOrFn === 'function' ? this.expOrFn : (0, _parsePath.parsePath)(expOrFn);
   this.value = this.lazy ? undefined : this.get();
 }
 
 Watcher.prototype.get = function () {
   var value;
   (0, _dep.pushTarget)(this); // if (this.dirty) Dep.target = this
+  // Dep.target = computedWatcher
 
-  value = this.expOrFn.call(this.vm); // if (this.dirty) Dep.target = null
+  value = this.getter.call(this.vm, this.vm); // if (this.dirty) Dep.target = null
 
   (0, _dep.popTarget)();
   return value;
@@ -866,7 +893,7 @@ Watcher.prototype.update = function () {
   if (this.lazy) {
     this.dirty = true;
   } else {
-    this.get();
+    this.run();
   }
 };
 
@@ -874,9 +901,10 @@ Watcher.prototype.addDep = function (dep) {
   var id = dep.id;
 
   if (!this.depIds.has(id)) {
+    //this.deps.push (this.num dep)
     this.deps.push(dep);
     this.depIds.add(id);
-    dep.addSub(this);
+    dep.addSub(this); //this.num dep.sub.push +  computedWatcher
   }
 };
 
@@ -892,7 +920,23 @@ Watcher.prototype.depend = function () {
     this.deps[i].depend();
   }
 };
-},{"./dep":"src/dep.js"}],"src/observe.js":[function(require,module,exports) {
+
+Watcher.prototype.run = function () {
+  var value = this.get();
+
+  if (value !== this.value) {
+    var oldValue = this.value;
+    this.value = value;
+    this.cb.call(this.vm, value, oldValue);
+    console.log(this.cb);
+  }
+}; //watch 实现原理
+//初始化时 创建了num的watchWatcher num和watchMsg的observe
+//把watchWatcher添加到num的Dep中
+// set => update => run 找到 num的新值 把新旧值传给this.cb 
+// 改变了this.watchMsg 触发updateComponent
+// parsePath 用于创建获取num的对象:Vue['num']
+},{"./dep":"src/dep.js","./parsePath":"src/parsePath.js"}],"src/observe.js":[function(require,module,exports) {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", {
@@ -921,6 +965,7 @@ function observe(data) {
       get: function get() {
         if (_dep.default.target) {
           //dep.addSub(Dep.target);
+          //Dep.target computedWatcher
           dep.depend();
         }
 
@@ -1205,12 +1250,14 @@ function Vue(options) {
   this._init(options);
 }
 
+stateMixin(Vue);
+
 Vue.prototype._init = function (options) {
   this.$options = options;
   initData(this);
   initMethods(this);
-  console.log(this.$options.computed);
   initComputed(this, this.$options.computed);
+  initWatch(this, this.$options.watch);
   this.$mount(this.$options.el);
 }; //挂载 编译原理 AST语法树
 
@@ -1228,7 +1275,8 @@ var mountComponent = function mountComponent(vm, el) {
     }
 
     vm._vnode = vnode;
-  };
+  }; //Dep.target = renderWatcher
+
 
   new _watcher.default(vm, updateComponent);
 };
@@ -1294,11 +1342,17 @@ var vm = new Vue({
   el: '#app',
   data: {
     title: 'prev',
-    num: 1
+    num: 1,
+    watchMsg: "msg"
   },
-  computed: {
-    computedNum: function computedNum() {
-      return this.num * 100;
+  // computed:{
+  //     computedNum(){
+  //         return this.num * 100;
+  //     }
+  // },
+  watch: {
+    num: function num(newVal, oldVal) {
+      this.watchMsg = newVal + " dajllda";
     }
   },
   render: function render(h) {
@@ -1306,7 +1360,7 @@ var vm = new Vue({
       on: {
         click: this.someFn
       }
-    }, this.computedNum);
+    }, this.watchMsg);
   },
   methods: {
     someFn: function someFn() {
@@ -1324,7 +1378,7 @@ function initComputed(vm, computed) {
   for (var key in computed) {
     var userDef = computed[key];
     var getter = typeof userDef === 'function' ? userDef : userDef.get;
-    vm._computedWatchers[key] = new _watcher.default(vm, getter, computedWatcherOptions);
+    vm._computedWatchers[key] = new _watcher.default(vm, getter, noop, computedWatcherOptions);
     defineComputed(vm, key, userDef);
   }
 }
@@ -1339,8 +1393,7 @@ function defineComputed(target, key, userDef) {
       if (watcher) {
         if (watcher.dirty) {
           watcher.evaluate();
-        } //
-
+        }
 
         if (_dep.default.target) {
           watcher.depend();
@@ -1351,6 +1404,61 @@ function defineComputed(target, key, userDef) {
     },
     set: noop
   });
+}
+
+function isPlainObject(obj) {
+  return Object.prototype.toString.call(obj) === '[object Object]';
+}
+
+function initWatch(vm, watch) {
+  for (var key in watch) {
+    var handler = watch[key];
+
+    if (Array.isArray(handler)) {
+      for (var i = 0; i < handler.length; i++) {
+        createWatcher(vm, key, handler[i]);
+      }
+    } else {
+      createWatcher(vm, key, handler);
+    }
+  }
+}
+/**
+ * num:{
+ *  handler(newVal,oldVal){
+ *      this.watchMsg = newVal + "12313";
+ *  },
+ *  deep:true
+ * }
+ * 
+ */
+
+
+function createWatcher(vm, expOrFn, handler, options) {
+  if (isPlainObject(handler)) {
+    options = handler;
+    handler = handler.handler;
+  }
+
+  if (typeof handler === 'string') {
+    handler = vm[handler];
+  }
+
+  return vm.$watch(expOrFn, handler, options);
+}
+
+function stateMixin(Vue) {
+  Vue.prototype.$watch = function (expOrFn, cb, options) {
+    var vm = this;
+
+    if (isPlainObject(cb)) {
+      return createWatcher(vm, expOrFn, cb, options);
+    }
+
+    options = options || {};
+    options.user = true;
+    var watcher = new _watcher.default(vm, expOrFn, cb, options);
+  };
 }
 },{"snabbdom":"node_modules/snabbdom/es/snabbdom.js","./watcher":"src/watcher.js","./observe":"src/observe.js","./dep":"src/dep.js","snabbdom/modules/class":"node_modules/snabbdom/modules/class.js","snabbdom/modules/props":"node_modules/snabbdom/modules/props.js","snabbdom/modules/style":"node_modules/snabbdom/modules/style.js","snabbdom/modules/eventlisteners":"node_modules/snabbdom/modules/eventlisteners.js"}],"../../AppData/Roaming/npm/node_modules/parcel-bundler/src/builtins/hmr-runtime.js":[function(require,module,exports) {
 var global = arguments[3];

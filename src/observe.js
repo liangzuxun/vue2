@@ -15,13 +15,14 @@ export function observe(data) {
       get() {
         if (Dep.target) {
           //dep.addSub(Dep.target);
+          //Dep.target computedWatcher
           dep.depend();
         }
         return val
       },
       set(newVal) {
         if (val === newVal) return;
-        val = newVal
+        val = newVal;
         dep.notify(); // 通知所有订阅者
       },
     })

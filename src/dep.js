@@ -15,6 +15,7 @@ Dep.prototype.addSub = function(sub) {
 }
  
 Dep.prototype.depend = function() {
+  //computedWatcher
   if (Dep.target) {
     Dep.target.addDep(this)
   }
